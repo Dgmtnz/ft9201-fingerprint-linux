@@ -95,6 +95,14 @@ it makes bulk capture impractical without a workaround.
   plus the two evaluation tools (`fp-collect`, `nbis-bench`). The tools are
   offered separately in case they are not wanted in-tree.
 
+## Reproducing this
+
+Tooling, evaluation scripts and the tuned driver are at
+<https://github.com/Dgmtnz/ft9201-fingerprint-linux>, along with an Arch
+PKGBUILD. The capture set itself is deliberately not published — they are real
+fingerprints, and unlike a password they cannot be rotated if they leak.
+`fp-collect` from patch 2 gathers an equivalent set in a couple of minutes.
+
 ## Method
 
 25 genuine + 24 impostor captures (3 fingers), raw frames off the sensor.
