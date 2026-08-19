@@ -1,0 +1,28 @@
+# DATOS BIOMETRICOS - NUNCA SUBIR
+# Son huellas dactilares reales. A diferencia de una contrasena, no se pueden
+# cambiar si se filtran. Se conservan en local porque hacen falta para
+# recalibrar, pero quedan fuera del repositorio.
+dataset/
+capturas/
+raws/
+raws_inv/
+*.raw
+*.variant
+*mosaico*.png
+enroll_img*.png
+
+# Artefactos de compilacion y empaquetado
+libfprint/build/
+paquete/libfprint-tod-src/
+paquete/src/
+paquete/pkg/
+paquete/*.pkg.tar.zst
+paquete/*.log
+
+# Copias de seguridad del sistema (rutas y config locales)
+backup-pam/
+backup-intento-previo/
+
+# Clon de trabajo de libfprint: no se versiona aqui. Se reconstruye con las
+# instrucciones del README y los parches de upstream/.
+libfprint/

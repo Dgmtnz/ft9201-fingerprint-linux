@@ -1,0 +1,50 @@
+# libfprint-tod con el driver FocalTech FT9201 (2808:9338) incorporado.
+#
+# Se basa en el fork TOD de 3v1n0 porque el fprintd de Arch enlaza contra
+# libfprint-2.so.2 Y libfprint-2-tod.so.1: un libfprint normal lo rompe.
+#
+# El driver viene de la MR !572 de libfprint (obra de 0xCoDSnet), con los
+# parametros del matcher recalibrados sobre medidas reales. Ver ../README.md
+
+pkgname=libfprint-tod-ft9201
+pkgver=1.95.2+tod1.ft9201
+pkgrel=1
+pkgdesc="libfprint (TOD) con soporte para el lector de huella FocalTech FT9201"
+url="https://fprint.freedesktop.org/"
+arch=(x86_64)
+license=(LGPL-2.1-or-later)
+depends=(gcc-libs glib2 glibc libgudev libgusb nss pixman)
+makedepends=(git glib2-devel gobject-introspection gtk-doc meson python-cairo python-gobject systemd)
+provides=(libfprint libfprint-tod libfprint-2.so libfprint-2-tod.so)
+conflicts=(libfprint libfprint-tod)
+groups=(fprint)
+options=('!lto')
+
+_fork=https://gitlab.freedesktop.org/3v1n0/libfprint.git
+source=("libfprint-tod::git+$_fork#tag=v1.95.2+tod1"
+        "focaltech_moh.c::file://../driver/focaltech_moh.c"
+        "focaltech_moh.h::file://../driver/focaltech_moh.h")
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+prepare() {
+  cd libfprint-tod
+  install -d libfprint/drivers/focaltech_moh
+  install -m644 "$srcdir/focaltech_moh.c" "$srcdir/focaltech_moh.h" \
+                libfprint/drivers/focaltech_moh/
+
+  # registrar el driver en el sistema de compilacion
+  sed -i "s|^\(\s*'focaltech_moc': files('drivers/focaltech_moc/focaltech_moc.c'),\)|\1\n    'focaltech_moh': files('drivers/focaltech_moh/focaltech_moh.c'),|" \
+      libfprint/meson.build
+  sed -i "s|^\(\s*\)'focaltech_moc',|\1'focaltech_moc',\n\1'focaltech_moh',|" meson.build
+
+  grep -q focaltech_moh libfprint/meson.build || { echo "fallo al registrar el driver"; return 1; }
+}
+
+build() {
+  arch-meson libfprint-tod build -D drivers=all -D installed-tests=false
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}
