@@ -1,7 +1,7 @@
-From 89b8e1b6fc50829d72fbe4f737b70108927c49eb Mon Sep 17 00:00:00 2001
+From e68e554dd3365e53ec81772c481312309680c238 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
-Date: Thu, 20 Aug 2026 23:14:34 +0200
-Subject: [PATCH 3/3] focaltech_moh: implement identify
+Date: Fri, 21 Aug 2026 00:54:45 +0200
+Subject: [PATCH 3/4] focaltech_moh: implement identify
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -16,7 +16,8 @@ one: fprintd lists the most recently enrolled print first, so that is
 the only one still recognised. The template data was never lost, it
 just was not being consulted. Reproduced on 2808:9338 with six fingers
 enrolled, where only the last one ever matched; after this change a
-finger enrolled five enrollments ago identifies correctly at 0.678.
+finger enrolled five enrollments earlier identifies correctly at 0.678
+while the other five sit at 0.13.
 
 Scores the probe against every gallery print and keeps the highest,
 rather than returning the first print over the threshold, so a
@@ -32,11 +33,11 @@ threshold here needs impostor data against a large gallery, which I do
 not have.
 ---
  .../drivers/focaltech_moh/focaltech_moh.c     | 166 ++++++++++++++++++
- .../drivers/focaltech_moh/focaltech_moh.h     |   6 +
- 2 files changed, 172 insertions(+)
+ .../drivers/focaltech_moh/focaltech_moh.h     |   7 +
+ 2 files changed, 173 insertions(+)
 
 diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
-index ebb3f62..a189bd8 100644
+index 8afc7ae..4627819 100644
 --- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
 +++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
 @@ -367,6 +367,55 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
@@ -232,12 +233,12 @@ index ebb3f62..a189bd8 100644
 +  dev_class->identify = focaltech_moh_identify;
    dev_class->capture = focaltech_moh_capture;
  
-   /* Dataset collection only: libfprint's thermal model counts the time spent
+   fpi_device_class_auto_initialize_features (dev_class);
 diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.h b/libfprint/drivers/focaltech_moh/focaltech_moh.h
-index 278eb48..b188619 100644
+index 278eb48..3dcd20a 100644
 --- a/libfprint/drivers/focaltech_moh/focaltech_moh.h
 +++ b/libfprint/drivers/focaltech_moh/focaltech_moh.h
-@@ -113,6 +113,12 @@ enum verify_states {
+@@ -113,6 +113,13 @@ enum verify_states {
    VERIFY_NUM_STATES,
  };
  
@@ -246,6 +247,7 @@ index 278eb48..b188619 100644
 +  IDENTIFY_MATCH,             /* NCC matching against every gallery print */
 +  IDENTIFY_NUM_STATES,
 +};
++
 +
  struct _FpiDeviceFocaltechMoh
  {

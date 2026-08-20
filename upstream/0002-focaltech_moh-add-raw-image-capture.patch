@@ -1,0 +1,88 @@
+From 3a21c79653cc46f540eeba6aa4f097210bff464f Mon Sep 17 00:00:00 2001
+From: dgmtnz <dgmtnz.2019@gmail.com>
+Date: Fri, 21 Aug 2026 00:53:18 +0200
+Subject: [PATCH 2/4] focaltech_moh: add raw image capture
+
+Implements dev_class->capture, handing out the raw sensor frame rather
+than the preprocessed one. Without it there is no way to evaluate
+preprocessing or matching offline, and every experiment costs another
+round of finger presses. It is what made the retuning in the previous
+commit measurable.
+---
+ .../drivers/focaltech_moh/focaltech_moh.c     | 46 +++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+index 4c705d1..8afc7ae 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+@@ -36,6 +36,7 @@
+ 
+ #include "drivers_api.h"
+ #include "focaltech_moh.h"
++#include "fpi-image.h"
+ 
+ #include <math.h>
+ 
+@@ -672,6 +673,50 @@ focaltech_moh_verify (FpDevice *dev)
+   fpi_ssm_start (self->task_ssm, verify_ssm_complete);
+ }
+ 
++/* ------------------------------------------------------------------ */
++/* Image capture (raw, for dataset collection and debugging)           */
++/* ------------------------------------------------------------------ */
++
++static void
++capture_task_ssm_complete (FpiSsm *ssm, FpDevice *dev, GError *error)
++{
++  FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
++  FpImage *img;
++
++  self->task_ssm = NULL;
++
++  fpi_device_report_finger_status_changes (dev,
++                                           FP_FINGER_STATUS_NONE,
++                                           FP_FINGER_STATUS_PRESENT);
++
++  if (error)
++    {
++      fpi_device_capture_complete (dev, NULL, error);
++      return;
++    }
++
++  /* Deliberately hand out the *raw* sensor frame, not the preprocessed one:
++   * this is what makes the capture useful for evaluating preprocessing and
++   * matching offline. */
++  img = fp_image_new (FT9201_RAW_WIDTH, FT9201_RAW_HEIGHT);
++  memcpy (img->data, self->image_buf, FT9201_RAW_SIZE);
++
++  fpi_device_capture_complete (dev, img, NULL);
++}
++
++static void
++focaltech_moh_capture (FpDevice *dev)
++{
++  FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
++
++  fpi_device_report_finger_status_changes (dev,
++                                           FP_FINGER_STATUS_NEEDED,
++                                           FP_FINGER_STATUS_NONE);
++
++  self->task_ssm = fpi_ssm_new (dev, capture_ssm_handler, CAPTURE_NUM_STATES);
++  fpi_ssm_start (self->task_ssm, capture_task_ssm_complete);
++}
++
+ /* ------------------------------------------------------------------ */
+ /* GType boilerplate                                                   */
+ /* ------------------------------------------------------------------ */
+@@ -697,6 +742,7 @@ fpi_device_focaltech_moh_class_init (FpiDeviceFocaltechMohClass *klass)
+   dev_class->close = dev_close;
+   dev_class->enroll = focaltech_moh_enroll;
+   dev_class->verify = focaltech_moh_verify;
++  dev_class->capture = focaltech_moh_capture;
+ 
+   fpi_device_class_auto_initialize_features (dev_class);
+ }
+-- 
+2.55.0
+

@@ -44,7 +44,8 @@ G_DEFINE_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh,
                FP_TYPE_DEVICE)
 
 static const FpIdEntry id_table[] = {
-  { .vid = FT9201_VID, .pid = FT9201_PID },
+  { .vid = FOCALTECH_VID, .pid = 0x9338 },
+  { .vid = FOCALTECH_VID, .pid = 0x9348 },
   { .vid = 0, .pid = 0 },
 };
 

@@ -26,6 +26,14 @@ que el driver verificara de forma fiable.
 **Importante:** los drivers de lectores USB de huella no van al kernel. Van a
 libfprint, en espacio de usuario sobre libusb.
 
+## Estado de la contribución upstream
+
+El informe con las mediciones está publicado en la MR !572
+([note #3626051](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/572#note_3626051)).
+Los cuatro parches de `upstream/` están listos; falta abrir la MR, pendiente de
+que freedesktop conceda permiso de fork
+([solicitud #3807](https://gitlab.freedesktop.org/freedesktop/freedesktop/-/work_items/3807)).
+
 ## Los tres parámetros
 
 ```
@@ -48,7 +56,7 @@ el mismo matcher da 0,07%.
 ## Contenido
 
 ```
-upstream/        parches e informe para enviar a la MR !572
+upstream/        4 parches + informe para la MR !572
 paquete/         PKGBUILD de libfprint-tod-ft9201 para Arch
 analyze_*.py     evaluación de matchers (el válido es analyze_decision.py)
 matcher_*.py     desarrollo del matcher, incluido BLPOC
