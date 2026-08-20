@@ -28,11 +28,10 @@ libfprint, en espacio de usuario sobre libusb.
 
 ## Estado de la contribución upstream
 
-El informe con las mediciones está publicado en la MR !572
-([note #3626051](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/572#note_3626051)).
-Los cuatro parches de `upstream/` están listos; falta abrir la MR, pendiente de
-que freedesktop conceda permiso de fork
-([solicitud #3807](https://gitlab.freedesktop.org/freedesktop/freedesktop/-/work_items/3807)).
+**MR abierta: [libfprint!646](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/646)**
+— 10 commits, los 6 originales de @0xCoDSnet con su autoría intacta más los 4 de este
+trabajo. Continúa la [!572](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/572),
+sin tocar desde marzo de 2026, y aplica de paso las sugerencias de revisión pendientes.
 
 ## Los tres parámetros
 
