@@ -113,6 +113,12 @@ enum verify_states {
   VERIFY_NUM_STATES,
 };
 
+enum focaltech_moh_identify_states {
+  IDENTIFY_CAPTURE,           /* Sub-SSM: full capture cycle */
+  IDENTIFY_MATCH,             /* NCC matching against every gallery print */
+  IDENTIFY_NUM_STATES,
+};
+
 struct _FpiDeviceFocaltechMoh
 {
   FpDevice parent;

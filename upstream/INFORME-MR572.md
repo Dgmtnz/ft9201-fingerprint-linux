@@ -64,6 +64,16 @@ impostor: 0/10 accepted  scores 0.111 - 0.446
 Before: 4/9 genuine, and genuine/impostor score ranges overlapped, so no
 threshold was safe at all.
 
+## identify was missing
+
+The driver only implemented `verify`. Anything authenticating without knowing
+which finger will be presented — a lock screen — has nothing to call, and ends
+up matching against a single stored print. The symptom is that enrolling a
+finger looks like it erases the previous one, because fprintd lists the newest
+print first and that is the only one still recognised. Nothing is lost; it just
+is not consulted. Patch 3 adds it, scoring against every gallery print and
+keeping the highest rather than returning the first over threshold.
+
 ## Three things worth knowing
 
 **1. GObject caps instance size at 64K.** `enroll_images` as a fixed array is
@@ -90,6 +100,7 @@ it makes bulk capture impractical without a workaround.
 ## Patches
 
 - `0001` — the retuning, plus templates to the heap.
+- `0003` — `dev_class->identify`.
 - `0002` — `dev_class->capture` returning the **raw** frame rather than the
   preprocessed one, without which none of the above could be measured offline,
   plus the two evaluation tools (`fp-collect`, `nbis-bench`). The tools are

@@ -1,0 +1,255 @@
+From 89b8e1b6fc50829d72fbe4f737b70108927c49eb Mon Sep 17 00:00:00 2001
+From: dgmtnz <dgmtnz.2019@gmail.com>
+Date: Thu, 20 Aug 2026 23:14:34 +0200
+Subject: [PATCH 3/3] focaltech_moh: implement identify
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Without dev_class->identify the driver only answered one-to-one verify
+requests. Anything that authenticates without knowing which finger will
+be presented — a lock screen, most notably — has nothing to call, and
+ends up matching against a single stored print instead of the whole set.
+
+The symptom is that enrolling a finger appears to erase the previous
+one: fprintd lists the most recently enrolled print first, so that is
+the only one still recognised. The template data was never lost, it
+just was not being consulted. Reproduced on 2808:9338 with six fingers
+enrolled, where only the last one ever matched; after this change a
+finger enrolled five enrollments ago identifies correctly at 0.678.
+
+Scores the probe against every gallery print and keeps the highest,
+rather than returning the first print over the threshold, so a
+near-miss on an early finger cannot mask the correct one.
+
+The per-template scoring loop verify already had is factored out into
+ft9201_score_against_print(), so both paths apply the same criterion.
+
+FT9201_NCC_THRESHOLD is left at the value calibrated for one-to-one
+verify. Identify compares against N prints, so the effective false
+accept rate grows with gallery size; whether that warrants a stricter
+threshold here needs impostor data against a large gallery, which I do
+not have.
+---
+ .../drivers/focaltech_moh/focaltech_moh.c     | 166 ++++++++++++++++++
+ .../drivers/focaltech_moh/focaltech_moh.h     |   6 +
+ 2 files changed, 172 insertions(+)
+
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+index ebb3f62..a189bd8 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+@@ -367,6 +367,55 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+     }
+ }
+ 
++/* Scores a probe image against every template stored in `print`.
++ * Returns FALSE if the print does not carry usable template data. Shared by
++ * verify and identify so both apply exactly the same criterion. */
++static gboolean
++ft9201_score_against_print (FpPrint *print, const guint8 *probe, double *out_score)
++{
++  g_autoptr(GVariant) var_data = NULL;
++  g_autoptr(GVariant) var_images = NULL;
++  GVariantIter iter;
++  GVariant *img_var;
++  guint8 version;
++  double best = -1.0;
++  int idx = 0;
++
++  g_object_get (print, "fpi-data", &var_data, NULL);
++
++  if (var_data == NULL ||
++      !g_variant_check_format_string (var_data, "(ya(ay))", FALSE))
++    return FALSE;
++
++  g_variant_get (var_data, "(y@a(ay))", &version, &var_images);
++
++  g_variant_iter_init (&iter, var_images);
++  while ((img_var = g_variant_iter_next_value (&iter)) != NULL)
++    {
++      g_autoptr(GVariant) inner = NULL;
++      const guint8 *tmpl_data;
++      gsize tmpl_len;
++
++      g_variant_get (img_var, "(@ay)", &inner);
++      tmpl_data = g_variant_get_fixed_array (inner, &tmpl_len, 1);
++
++      if (tmpl_len == FT9201_RAW_SIZE)
++        {
++          double score = ft9201_match_score (tmpl_data, probe);
++
++          fp_dbg ("NCC template %d: %.4f", idx, score);
++          if (score > best)
++            best = score;
++        }
++
++      g_variant_unref (img_var);
++      idx++;
++    }
++
++  *out_score = best;
++  return TRUE;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Enroll state machine                                                */
+ /* ------------------------------------------------------------------ */
+@@ -602,6 +651,113 @@ verify_ssm_complete (FpiSsm *ssm, FpDevice *dev, GError *error)
+     }
+ }
+ 
++/* ------------------------------------------------------------------ */
++/* Identify state machine                                              */
++/* ------------------------------------------------------------------ */
++
++static void
++identify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
++{
++  FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
++  int state = fpi_ssm_get_cur_state (ssm);
++
++  switch (state)
++    {
++    case IDENTIFY_CAPTURE:
++      {
++        FpiSsm *capture = fpi_ssm_new (dev, capture_ssm_handler,
++                                       CAPTURE_NUM_STATES);
++
++        fpi_device_report_finger_status_changes (dev,
++                                                 FP_FINGER_STATUS_NEEDED,
++                                                 FP_FINGER_STATUS_NONE);
++        fpi_ssm_start_subsm (ssm, capture);
++      }
++      break;
++
++    case IDENTIFY_MATCH:
++      {
++        g_autoptr(GPtrArray) prints = NULL;
++        guint8 preprocessed[FT9201_RAW_SIZE];
++        FpPrint *best_match = NULL;
++        double best_score = -1.0;
++        int unique;
++        guint i;
++
++        fpi_device_report_finger_status_changes (dev,
++                                                 FP_FINGER_STATUS_NONE,
++                                                 FP_FINGER_STATUS_PRESENT);
++
++        unique = count_unique_values (self->image_buf, FT9201_RAW_SIZE);
++        fp_dbg ("Identify: %d unique values", unique);
++
++        if (unique < FT9201_MIN_UNIQUE_VALUES)
++          {
++            fp_dbg ("Low quality identify image, retrying");
++            fpi_device_identify_report (dev, NULL, NULL,
++                                        fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
++            fpi_device_identify_complete (dev, NULL);
++            fpi_ssm_mark_completed (ssm);
++            return;
++          }
++
++        ft9201_preprocess (self->image_buf, preprocessed);
++
++        fpi_device_get_identify_data (dev, &prints);
++        if (prints != NULL)
++          g_ptr_array_ref (prints);
++
++        /* Score the probe against every gallery print and keep the best.
++         * Scanning all of them rather than stopping at the first hit means a
++         * near-miss on an early finger cannot mask the correct one. */
++        for (i = 0; prints != NULL && i < prints->len; i++)
++          {
++            FpPrint *candidate = g_ptr_array_index (prints, i);
++            double score;
++
++            if (!ft9201_score_against_print (candidate, preprocessed, &score))
++              {
++                fp_dbg ("Gallery print %u carries no usable template data", i);
++                continue;
++              }
++
++            fp_dbg ("Gallery print %u: best NCC %.4f", i, score);
++            if (score > best_score)
++              {
++                best_score = score;
++                best_match = candidate;
++              }
++          }
++
++        fp_dbg ("Best identify score: %.4f (threshold: %.2f)",
++                best_score, FT9201_NCC_THRESHOLD);
++
++        if (best_match != NULL && best_score >= FT9201_NCC_THRESHOLD)
++          fpi_device_identify_report (dev, best_match, NULL, NULL);
++        else
++          fpi_device_identify_report (dev, NULL, NULL, NULL);
++
++        fpi_device_identify_complete (dev, NULL);
++        fpi_ssm_mark_completed (ssm);
++      }
++      break;
++
++    default:
++      g_assert_not_reached ();
++    }
++}
++
++static void
++identify_ssm_complete (FpiSsm *ssm, FpDevice *dev, GError *error)
++{
++  FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
++
++  self->task_ssm = NULL;
++
++  if (error)
++    fpi_device_identify_complete (dev, error);
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Device lifecycle                                                    */
+ /* ------------------------------------------------------------------ */
+@@ -717,6 +873,15 @@ focaltech_moh_capture (FpDevice *dev)
+   fpi_ssm_start (self->task_ssm, capture_task_ssm_complete);
+ }
+ 
++static void
++focaltech_moh_identify (FpDevice *dev)
++{
++  FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
++
++  self->task_ssm = fpi_ssm_new (dev, identify_ssm_handler, IDENTIFY_NUM_STATES);
++  fpi_ssm_start (self->task_ssm, identify_ssm_complete);
++}
++
+ /* ------------------------------------------------------------------ */
+ /* GType boilerplate                                                   */
+ /* ------------------------------------------------------------------ */
+@@ -742,6 +907,7 @@ fpi_device_focaltech_moh_class_init (FpiDeviceFocaltechMohClass *klass)
+   dev_class->close = dev_close;
+   dev_class->enroll = focaltech_moh_enroll;
+   dev_class->verify = focaltech_moh_verify;
++  dev_class->identify = focaltech_moh_identify;
+   dev_class->capture = focaltech_moh_capture;
+ 
+   /* Dataset collection only: libfprint's thermal model counts the time spent
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.h b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+index 278eb48..b188619 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.h
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+@@ -113,6 +113,12 @@ enum verify_states {
+   VERIFY_NUM_STATES,
+ };
+ 
++enum focaltech_moh_identify_states {
++  IDENTIFY_CAPTURE,           /* Sub-SSM: full capture cycle */
++  IDENTIFY_MATCH,             /* NCC matching against every gallery print */
++  IDENTIFY_NUM_STATES,
++};
++
+ struct _FpiDeviceFocaltechMoh
+ {
+   FpDevice parent;
+-- 
+2.55.0
+

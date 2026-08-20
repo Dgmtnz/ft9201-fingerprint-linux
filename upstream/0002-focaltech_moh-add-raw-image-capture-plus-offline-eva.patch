@@ -1,7 +1,7 @@
 From b9d9d007ddd50d5921bb071e317e93e30141a971 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Thu, 20 Aug 2026 01:17:03 +0200
-Subject: [PATCH 2/2] focaltech_moh: add raw image capture, plus offline
+Subject: [PATCH 2/3] focaltech_moh: add raw image capture, plus offline
  evaluation tools
 
 Implements dev_class->capture, handing out the raw sensor frame rather

@@ -21,15 +21,16 @@ groups=(fprint)
 options=('!lto')
 
 _fork=https://gitlab.freedesktop.org/3v1n0/libfprint.git
-source=("libfprint-tod::git+$_fork#tag=v1.95.2+tod1"
-        "focaltech_moh.c::file://../driver/focaltech_moh.c"
-        "focaltech_moh.h::file://../driver/focaltech_moh.h")
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+source=("libfprint-tod::git+$_fork#tag=v1.95.2+tod1")
+sha256sums=('SKIP')
+
+# El driver vive en driver/ dentro de este mismo repositorio.
+_driverdir="$startdir/../driver"
 
 prepare() {
   cd libfprint-tod
   install -d libfprint/drivers/focaltech_moh
-  install -m644 "$srcdir/focaltech_moh.c" "$srcdir/focaltech_moh.h" \
+  install -m644 "$_driverdir/focaltech_moh.c" "$_driverdir/focaltech_moh.h" \
                 libfprint/drivers/focaltech_moh/
 
   # registrar el driver en el sistema de compilacion
