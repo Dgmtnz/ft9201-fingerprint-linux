@@ -8,6 +8,21 @@ The USB side of the driver is solid — the chip opens in ~150 ms, INT_STATUS
 polling works, and the frames it returns are clean 64x80 fingerprints. What
 did not work was matching: nothing ever verified reliably.
 
+This is not specific to my unit. In [note #3596398](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/572#note_3596398)
+@Kwaadpepper posts a *successful* verify on a 2808:9348:
+
+```
+NCC template 0: 0.2697   NCC template 3: 0.1012
+NCC template 1: 0.0610   NCC template 4: 0.3218
+NCC template 2: 0.0446
+Best NCC score: 0.3218 (threshold: 0.30)   MATCH!
+```
+
+A genuine finger clearing the threshold by 0.02, with four of five
+templates under 0.11, is the same picture I measured: the scores sit down in
+the noise, and whether a match happens is close to chance. After the change
+below, genuine scores on my unit land at 0.87-0.95.
+
 ## What was wrong
 
 Three parameters, measured rather than guessed:
