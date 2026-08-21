@@ -29,9 +29,15 @@ libfprint, en espacio de usuario sobre libusb.
 ## Estado de la contribución upstream
 
 **MR abierta: [libfprint!646](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/646)**
-— 10 commits, los 6 originales de @0xCoDSnet con su autoría intacta más los 4 de este
-trabajo. Continúa la [!572](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/572),
-sin tocar desde marzo de 2026, y aplica de paso las sugerencias de revisión pendientes.
+— 11 commits: los 6 originales de @0xCoDSnet con su autoría intacta más los 5 de este
+trabajo, con la pipeline en verde. Continúa la
+[!572](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/572), sin tocar
+desde marzo de 2026, y aplica de paso las sugerencias de revisión pendientes.
+
+Los parches de `upstream/` son solo los de este trabajo; se aplican sobre la rama de la
+MR !572. El único job que sigue en rojo es `test_unsupported_list`, que tiene
+`allow_failure: true` y se resuelve editando la wiki de *Unsupported Devices* cuando el
+driver se mergee.
 
 ## Los tres parámetros
 
@@ -39,7 +45,12 @@ sin tocar desde marzo de 2026, y aplica de paso las sugerencias de revisión pen
 FT9201_SEARCH_RADIUS       3 -> 16     el desplazamiento real entre pulsaciones
 FT9201_NUM_ENROLL_STAGES   5 -> 15     cada plantilla cubre poca área del dedo
 FT9201_NCC_THRESHOLD    0.30 -> 0.55   con margen deliberado sobre el óptimo
+temp_hot_seconds              -> -1    subir a 15 etapas rozaba el corte térmico
 ```
+
+Además el driver no implementaba `identify`, así que la pantalla de bloqueo solo
+reconocía la última huella registrada: las demás seguían en disco pero nadie las
+consultaba.
 
 Medidos sobre 25 capturas genuinas y 24 de impostores, no estimados. Detalle y
 metodología en [`upstream/INFORME-MR572.md`](upstream/INFORME-MR572.md).

@@ -177,11 +177,11 @@ ft9201_match_score (const guint8 *tmpl, const guint8 *probe)
 /* ------------------------------------------------------------------ */
 
 static void
-ft9201_ctrl_out (FpDevice  *dev,
-                 FpiSsm    *ssm,
-                 guint8     request,
-                 guint16    value,
-                 guint16    index)
+ft9201_ctrl_out (FpDevice *dev,
+                 FpiSsm   *ssm,
+                 guint8    request,
+                 guint16   value,
+                 guint16   index)
 {
   FpiUsbTransfer *transfer = fpi_usb_transfer_new (dev);
 
@@ -432,7 +432,7 @@ enroll_ssm_handler (FpiSsm *ssm, FpDevice *dev)
     case ENROLL_CAPTURE:
       {
         FpiSsm *capture = fpi_ssm_new (dev, capture_ssm_handler,
-                                        CAPTURE_NUM_STATES);
+                                       CAPTURE_NUM_STATES);
 
         fpi_device_report_finger_status_changes (dev,
                                                  FP_FINGER_STATUS_NEEDED,
@@ -541,7 +541,7 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
     case VERIFY_CAPTURE:
       {
         FpiSsm *capture = fpi_ssm_new (dev, capture_ssm_handler,
-                                        CAPTURE_NUM_STATES);
+                                       CAPTURE_NUM_STATES);
 
         fpi_device_report_finger_status_changes (dev,
                                                  FP_FINGER_STATUS_NEEDED,
@@ -910,6 +910,12 @@ fpi_device_focaltech_moh_class_init (FpiDeviceFocaltechMohClass *klass)
   dev_class->verify = focaltech_moh_verify;
   dev_class->identify = focaltech_moh_identify;
   dev_class->capture = focaltech_moh_capture;
+
+  /* The temperature model counts time spent *waiting for a finger* as active
+   * time, and a 15-stage enrollment spends most of its time waiting. That is
+   * enough to trip the overheat guard on a sensor that is sitting idle. Every
+   * other match-on-chip driver here does the same, including focaltech_moc. */
+  dev_class->temp_hot_seconds = -1;
 
   fpi_device_class_auto_initialize_features (dev_class);
 }

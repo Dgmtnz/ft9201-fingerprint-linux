@@ -1,7 +1,7 @@
-From 3a21c79653cc46f540eeba6aa4f097210bff464f Mon Sep 17 00:00:00 2001
+From c9f44f11847a233d6689157ee4b88bb51ce31d55 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Fri, 21 Aug 2026 00:53:18 +0200
-Subject: [PATCH 2/4] focaltech_moh: add raw image capture
+Subject: [PATCH 2/5] focaltech_moh: add raw image capture
 
 Implements dev_class->capture, handing out the raw sensor frame rather
 than the preprocessed one. Without it there is no way to evaluate
@@ -9,11 +9,12 @@ preprocessing or matching offline, and every experiment costs another
 round of finger presses. It is what made the retuning in the previous
 commit measurable.
 ---
- .../drivers/focaltech_moh/focaltech_moh.c     | 46 +++++++++++++++++++
- 1 file changed, 46 insertions(+)
+ .../drivers/focaltech_moh/focaltech_moh.c     | 47 +++++++++++++++++++
+ tests/focaltech_moh/custom.py                 |  2 +-
+ 2 files changed, 48 insertions(+), 1 deletion(-)
 
 diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
-index 4c705d1..8afc7ae 100644
+index ffd297c..17463c2 100644
 --- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
 +++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
 @@ -36,6 +36,7 @@
@@ -75,14 +76,28 @@ index 4c705d1..8afc7ae 100644
  /* ------------------------------------------------------------------ */
  /* GType boilerplate                                                   */
  /* ------------------------------------------------------------------ */
-@@ -697,6 +742,7 @@ fpi_device_focaltech_moh_class_init (FpiDeviceFocaltechMohClass *klass)
+@@ -697,6 +742,8 @@ fpi_device_focaltech_moh_class_init (FpiDeviceFocaltechMohClass *klass)
    dev_class->close = dev_close;
    dev_class->enroll = focaltech_moh_enroll;
    dev_class->verify = focaltech_moh_verify;
 +  dev_class->capture = focaltech_moh_capture;
++
+   /* The temperature model counts time spent *waiting for a finger* as active
+    * time, and a 15-stage enrollment spends most of its time waiting. That is
+    * enough to trip the overheat guard on a sensor that is sitting idle. Every
+diff --git a/tests/focaltech_moh/custom.py b/tests/focaltech_moh/custom.py
+index b9a6d97..0252d28 100755
+--- a/tests/focaltech_moh/custom.py
++++ b/tests/focaltech_moh/custom.py
+@@ -19,7 +19,7 @@ d = devices[0]
+ del devices
  
-   fpi_device_class_auto_initialize_features (dev_class);
- }
+ assert d.get_driver() == "focaltech_moh"
+-assert not d.has_feature(FPrint.DeviceFeature.CAPTURE)
++assert d.has_feature(FPrint.DeviceFeature.CAPTURE)
+ assert not d.has_feature(FPrint.DeviceFeature.IDENTIFY)
+ assert d.has_feature(FPrint.DeviceFeature.VERIFY)
+ assert not d.has_feature(FPrint.DeviceFeature.DUPLICATES_CHECK)
 -- 
 2.55.0
 

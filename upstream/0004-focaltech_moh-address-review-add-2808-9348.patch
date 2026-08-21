@@ -1,7 +1,7 @@
-From c018e97b21701fc131264a2b722f7fd937a7e20e Mon Sep 17 00:00:00 2001
+From b6b2ba7094092f305561661471f06e0467acd424 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Fri, 21 Aug 2026 00:55:02 +0200
-Subject: [PATCH 4/4] focaltech_moh: address review, add 2808:9348
+Subject: [PATCH 4/5] focaltech_moh: address review, add 2808:9348
 
 Applies the outstanding review suggestions on !572:
 
@@ -23,10 +23,10 @@ autosuspend.hwdb, which is what the original hwdb commit did for 9338.
  4 files changed, 4 insertions(+), 5 deletions(-)
 
 diff --git a/data/autosuspend.hwdb b/data/autosuspend.hwdb
-index 5e7cc99..1796af2 100644
+index 67bcfe5..9107577 100644
 --- a/data/autosuspend.hwdb
 +++ b/data/autosuspend.hwdb
-@@ -192,6 +192,7 @@ usb:v2808p079A*
+@@ -204,6 +204,7 @@ usb:v2808p6553*
  
  # Supported by libfprint driver focaltech_moh
  usb:v2808p9338*
@@ -34,16 +34,16 @@ index 5e7cc99..1796af2 100644
   ID_AUTOSUSPEND=1
   ID_PERSIST=0
  
-@@ -485,7 +486,6 @@ usb:v27C6p589A*
- usb:v27C6p5F10*
+@@ -545,7 +546,6 @@ usb:v27C6p5F10*
  usb:v27C6p5F91*
- usb:v27C6p6382*
+ usb:v2808p06FC*
+ usb:v2808p6652*
 -usb:v2808p9348*
  usb:v2808p93A9*
- usb:v2808pA658*
- usb:v2808pC652*
+ usb:v2808pA553*
+ usb:v2808pA573*
 diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
-index 4627819..178b6e9 100644
+index ffd63ff..86ecc58 100644
 --- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
 +++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
 @@ -44,7 +44,8 @@ G_DEFINE_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh,
@@ -71,17 +71,17 @@ index 3dcd20a..b826348 100644
  #define FT9201_EP_IN 0x83   /* Bulk IN  (EP3, 32B max packet) */
  
 diff --git a/libfprint/fprint-list-udev-hwdb.c b/libfprint/fprint-list-udev-hwdb.c
-index eb0f9d8..2a80b41 100644
+index 90a43be..4907480 100644
 --- a/libfprint/fprint-list-udev-hwdb.c
 +++ b/libfprint/fprint-list-udev-hwdb.c
-@@ -158,7 +158,6 @@ static const FpIdEntry allowlist_id_table[] = {
-   { .vid = 0x27c6, .pid = 0x5f10 },
+@@ -188,7 +188,6 @@ static const FpIdEntry allowlist_id_table[] = {
    { .vid = 0x27c6, .pid = 0x5f91 },
-   { .vid = 0x27c6, .pid = 0x6382 },
+   { .vid = 0x2808, .pid = 0x06fc },
+   { .vid = 0x2808, .pid = 0x6652 },
 -  { .vid = 0x2808, .pid = 0x9348 },
    { .vid = 0x2808, .pid = 0x93a9 },
-   { .vid = 0x2808, .pid = 0xa658 },
-   { .vid = 0x2808, .pid = 0xc652 },
+   { .vid = 0x2808, .pid = 0xa553 },
+   { .vid = 0x2808, .pid = 0xa573 },
 -- 
 2.55.0
 

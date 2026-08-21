@@ -1,7 +1,7 @@
-From e68e554dd3365e53ec81772c481312309680c238 Mon Sep 17 00:00:00 2001
+From e23d8f0fe7ff0f3339131d10aa27615404a228d6 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Fri, 21 Aug 2026 00:54:45 +0200
-Subject: [PATCH 3/4] focaltech_moh: implement identify
+Subject: [PATCH 3/5] focaltech_moh: implement identify
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -34,10 +34,11 @@ not have.
 ---
  .../drivers/focaltech_moh/focaltech_moh.c     | 166 ++++++++++++++++++
  .../drivers/focaltech_moh/focaltech_moh.h     |   7 +
- 2 files changed, 173 insertions(+)
+ tests/focaltech_moh/custom.py                 |   2 +-
+ 3 files changed, 174 insertions(+), 1 deletion(-)
 
 diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
-index 8afc7ae..4627819 100644
+index 17463c2..ffd63ff 100644
 --- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
 +++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
 @@ -367,6 +367,55 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
@@ -233,7 +234,7 @@ index 8afc7ae..4627819 100644
 +  dev_class->identify = focaltech_moh_identify;
    dev_class->capture = focaltech_moh_capture;
  
-   fpi_device_class_auto_initialize_features (dev_class);
+   /* The temperature model counts time spent *waiting for a finger* as active
 diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.h b/libfprint/drivers/focaltech_moh/focaltech_moh.h
 index 278eb48..3dcd20a 100644
 --- a/libfprint/drivers/focaltech_moh/focaltech_moh.h
@@ -252,6 +253,19 @@ index 278eb48..3dcd20a 100644
  struct _FpiDeviceFocaltechMoh
  {
    FpDevice parent;
+diff --git a/tests/focaltech_moh/custom.py b/tests/focaltech_moh/custom.py
+index 0252d28..34b4e23 100755
+--- a/tests/focaltech_moh/custom.py
++++ b/tests/focaltech_moh/custom.py
+@@ -20,7 +20,7 @@ del devices
+ 
+ assert d.get_driver() == "focaltech_moh"
+ assert d.has_feature(FPrint.DeviceFeature.CAPTURE)
+-assert not d.has_feature(FPrint.DeviceFeature.IDENTIFY)
++assert d.has_feature(FPrint.DeviceFeature.IDENTIFY)
+ assert d.has_feature(FPrint.DeviceFeature.VERIFY)
+ assert not d.has_feature(FPrint.DeviceFeature.DUPLICATES_CHECK)
+ assert not d.has_feature(FPrint.DeviceFeature.STORAGE)
 -- 
 2.55.0
 
