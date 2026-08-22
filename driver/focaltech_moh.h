@@ -37,11 +37,14 @@ G_DECLARE_FINAL_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh, FPI,
 
 #define FT9201_CMD_TIMEOUT 5000
 #define FT9201_POLL_INTERVAL 30   /* ms between finger detection polls */
+#define FT9201_FINGER_UP_INTERVAL 10   /* ms between latch-drain polls */
+#define FT9201_FINGER_UP_MAX_POLLS 200 /* give up draining after ~2s */
 
 /* Enrollment and matching */
 #define FT9201_NUM_ENROLL_STAGES 15
-#define FT9201_NCC_THRESHOLD 0.55
+#define FT9201_NCC_THRESHOLD 0.50
 #define FT9201_SEARCH_RADIUS 16         /* pixels, each direction */
+#define FT9201_COARSE_STEP 2            /* coarse pass stride, then +-1 refine */
 #define FT9201_LOCAL_MEAN_WINDOW 7      /* 7x7 window for high-pass */
 #define FT9201_MIN_UNIQUE_VALUES 50     /* minimum unique pixel values for quality */
 
@@ -74,7 +77,11 @@ enum capture_states {
   CAPTURE_WARMUP_CMD,         /* OUT 0x6F(32, 0x9180) */
   CAPTURE_WARMUP_READ,        /* BULK IN 32B (discard) */
 
-  /* Finger detection: poll INT_STATUS until finger present */
+  /* Finger detection, two phases. The chip latches INT_STATUS on a touch and
+   * keeps it set while nothing reads it, so a press made while the device was
+   * closed is still pending on the next open and would fire a capture on an
+   * empty sensor. Drain it first, then wait for a fresh press. */
+  CAPTURE_WAIT_FINGER_UP,     /* IN 0x43 -- wait for byte0 == 0 (drain latch) */
   CAPTURE_POLL_FINGER,        /* IN 0x43 -- byte0: 0=no finger, 1=finger */
 
   /* Sync: poke 0xFF00 */
@@ -124,6 +131,7 @@ struct _FpiDeviceFocaltechMoh
   FpDevice parent;
 
   gboolean warmup_done;
+  int      finger_up_polls;
   guint8  *image_buf;
 
   /* Enroll state */

@@ -1,0 +1,190 @@
+From a5228dbe2e459d34051a68b18ea5b9840967c073 Mon Sep 17 00:00:00 2001
+From: dgmtnz <dgmtnz.2019@gmail.com>
+Date: Sat, 22 Aug 2026 13:10:53 +0200
+Subject: [PATCH 6/6] focaltech_moh: drain stale INT_STATUS, speed up matching,
+ lower threshold
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Three changes from @Kwaadpepper's test reports on 2808:9348 in !646.
+
+Stale interrupt latch. The chip latches INT_STATUS on a touch and keeps
+it set until something reads it, so a press made while the device was
+closed is still pending at the next open: CAPTURE_POLL_FINGER sees 0x01
+on its first poll, captures an empty sensor and fails within 50ms,
+before the user has touched anything. Finger detection now drains the
+latch first — poll until 0x00, then wait for a fresh 0x01 — giving up
+after ~2s so a permanently stuck latch degrades to the old behaviour
+rather than hanging.
+
+Coarse-to-fine search. +-16 exhaustive is 1089 NCCs per template, 15
+templates per match. Striding by 2 and refining +-1 around the peak
+costs 296. Measured over 70 pairs: mean score loss 0.004, median 0.000,
+worst 0.053, and no genuine pair that cleared the threshold stopped
+clearing it.
+
+Threshold 0.55 -> 0.50. @Kwaadpepper measures a ~35% false reject rate
+at 0.55, with natural placement landing in 0.48-0.54. On my capture set
+0.50 and 0.55 are indistinguishable — both reject every impostor, and
+FRR is 10.2% vs 10.3% — so 0.50 costs nothing here and helps there.
+
+Not taking the suggested 0.48: at that value my own set starts
+accepting impostors (2.6%), and the same reports note adjacent fingers
+reaching 0.64-0.70 on individual templates, with a real enroll-duplicate
+at 0.6422. That last figure is the more interesting one and no threshold
+in this range defends against it; it deserves its own look rather than
+being traded away for convenience.
+
+The single-pass NCC rewrite is left out on purpose: two-pass is more
+numerically stable, and with the search space cut by 3.7x the remaining
+gain does not seem worth the precision loss on a value a security
+decision is taken from.
+---
+ .../drivers/focaltech_moh/focaltech_moh.c     | 55 ++++++++++++++++++-
+ .../drivers/focaltech_moh/focaltech_moh.h     | 12 +++-
+ 2 files changed, 62 insertions(+), 5 deletions(-)
+
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+index 82fffdf..d8a5c48 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+@@ -153,18 +153,43 @@ ft9201_ncc (const guint8 *a, const guint8 *b, int dx, int dy)
+   return num / denom;
+ }
+ 
++/* Coarse-to-fine translation search. A +-16 exhaustive sweep is 1089 NCCs per
++ * template, which at 15 templates is enough CPU to be noticeable; striding by 2
++ * and then refining +-1 around the peak costs 296 instead. The correlation
++ * surface is broad enough that this is nearly lossless: over 70 measured pairs
++ * the mean score loss is 0.004 (median 0.000, worst 0.053) and no genuine pair
++ * that cleared the threshold stopped clearing it. */
+ static double
+ ft9201_match_score (const guint8 *tmpl, const guint8 *probe)
+ {
+   int r = FT9201_SEARCH_RADIUS;
++  int step = FT9201_COARSE_STEP;
+   double best = -1.0;
++  int best_dx = 0, best_dy = 0;
+   int dx, dy;
+ 
+-  for (dy = -r; dy <= r; dy++)
+-    for (dx = -r; dx <= r; dx++)
++  for (dy = -r; dy <= r; dy += step)
++    for (dx = -r; dx <= r; dx += step)
+       {
+         double score = ft9201_ncc (tmpl, probe, dx, dy);
+ 
++        if (score > best)
++          {
++            best = score;
++            best_dx = dx;
++            best_dy = dy;
++          }
++      }
++
++  for (dy = best_dy - step + 1; dy < best_dy + step; dy++)
++    for (dx = best_dx - step + 1; dx < best_dx + step; dx++)
++      {
++        double score;
++
++        if (ABS (dx) > r || ABS (dy) > r)
++          continue;
++
++        score = ft9201_ncc (tmpl, probe, dx, dy);
+         if (score > best)
+           best = score;
+       }
+@@ -231,6 +256,28 @@ finger_poll_cb (FpiUsbTransfer *transfer,
+           transfer->buffer[2], transfer->buffer[3],
+           transfer->actual_length);
+ 
++  if (fpi_ssm_get_cur_state (transfer->ssm) == CAPTURE_WAIT_FINGER_UP)
++    {
++      FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
++
++      /* Drain a stale latch before honouring any press. Give up after a while
++       * rather than hanging: worst case we fall through to the old behaviour. */
++      if (transfer->buffer[0] == 0x00 ||
++          ++self->finger_up_polls >= FT9201_FINGER_UP_MAX_POLLS)
++        {
++          if (self->finger_up_polls >= FT9201_FINGER_UP_MAX_POLLS)
++            fp_dbg ("INT_STATUS still latched after %d polls, continuing anyway",
++                    self->finger_up_polls);
++          fpi_ssm_next_state (transfer->ssm);
++        }
++      else
++        {
++          fpi_ssm_jump_to_state_delayed (transfer->ssm, CAPTURE_WAIT_FINGER_UP,
++                                         FT9201_FINGER_UP_INTERVAL);
++        }
++      return;
++    }
++
+   if (transfer->buffer[0] == 0x01)
+     {
+       fp_dbg ("Finger detected!");
+@@ -255,9 +302,10 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+   switch (state)
+     {
+     case CAPTURE_WARMUP_PREP1:
++      self->finger_up_polls = 0;
+       if (self->warmup_done)
+         {
+-          fpi_ssm_jump_to_state (ssm, CAPTURE_POLL_FINGER);
++          fpi_ssm_jump_to_state (ssm, CAPTURE_WAIT_FINGER_UP);
+           return;
+         }
+       ft9201_ctrl_out (dev, ssm, FT9201_REQ_PREPARE, FT9201_PREPARE_INIT, 0);
+@@ -285,6 +333,7 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+       }
+       break;
+ 
++    case CAPTURE_WAIT_FINGER_UP:
+     case CAPTURE_POLL_FINGER:
+       {
+         FpiUsbTransfer *transfer = fpi_usb_transfer_new (dev);
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.h b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+index 44b596d..c699e44 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.h
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+@@ -37,11 +37,14 @@ G_DECLARE_FINAL_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh, FPI,
+ 
+ #define FT9201_CMD_TIMEOUT 5000
+ #define FT9201_POLL_INTERVAL 30   /* ms between finger detection polls */
++#define FT9201_FINGER_UP_INTERVAL 10   /* ms between latch-drain polls */
++#define FT9201_FINGER_UP_MAX_POLLS 200 /* give up draining after ~2s */
+ 
+ /* Enrollment and matching */
+ #define FT9201_NUM_ENROLL_STAGES 15
+-#define FT9201_NCC_THRESHOLD 0.55
++#define FT9201_NCC_THRESHOLD 0.50
+ #define FT9201_SEARCH_RADIUS 16         /* pixels, each direction */
++#define FT9201_COARSE_STEP 2            /* coarse pass stride, then +-1 refine */
+ #define FT9201_LOCAL_MEAN_WINDOW 7      /* 7x7 window for high-pass */
+ #define FT9201_MIN_UNIQUE_VALUES 50     /* minimum unique pixel values for quality */
+ 
+@@ -74,7 +77,11 @@ enum capture_states {
+   CAPTURE_WARMUP_CMD,         /* OUT 0x6F(32, 0x9180) */
+   CAPTURE_WARMUP_READ,        /* BULK IN 32B (discard) */
+ 
+-  /* Finger detection: poll INT_STATUS until finger present */
++  /* Finger detection, two phases. The chip latches INT_STATUS on a touch and
++   * keeps it set while nothing reads it, so a press made while the device was
++   * closed is still pending on the next open and would fire a capture on an
++   * empty sensor. Drain it first, then wait for a fresh press. */
++  CAPTURE_WAIT_FINGER_UP,     /* IN 0x43 -- wait for byte0 == 0 (drain latch) */
+   CAPTURE_POLL_FINGER,        /* IN 0x43 -- byte0: 0=no finger, 1=finger */
+ 
+   /* Sync: poke 0xFF00 */
+@@ -124,6 +131,7 @@ struct _FpiDeviceFocaltechMoh
+   FpDevice parent;
+ 
+   gboolean warmup_done;
++  int      finger_up_polls;
+   guint8  *image_buf;
+ 
+   /* Enroll state */
+-- 
+2.55.0
+

@@ -1,7 +1,7 @@
 From b6b2ba7094092f305561661471f06e0467acd424 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Fri, 21 Aug 2026 00:55:02 +0200
-Subject: [PATCH 4/5] focaltech_moh: address review, add 2808:9348
+Subject: [PATCH 4/6] focaltech_moh: address review, add 2808:9348
 
 Applies the outstanding review suggestions on !572:
 

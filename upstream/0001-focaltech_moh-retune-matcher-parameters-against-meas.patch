@@ -1,7 +1,7 @@
 From 28ce61e52f4f8d0c7bd0480d4555623ea4fd38ec Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Fri, 21 Aug 2026 00:52:59 +0200
-Subject: [PATCH 1/5] focaltech_moh: retune matcher parameters against measured
+Subject: [PATCH 1/6] focaltech_moh: retune matcher parameters against measured
  data
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
