@@ -1,0 +1,249 @@
+From 299188d8b7ad6cf1896851aa40822db76c021907 Mon Sep 17 00:00:00 2001
+From: dgmtnz <dgmtnz.2019@gmail.com>
+Date: Thu, 10 Sep 2026 12:24:03 +0200
+Subject: [PATCH 7/7] focaltech_moh: require corroboration instead of a single
+ best template
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+@Kwaadpepper reproduced an adjacent-finger false accept in !646 and
+posted the per-template breakdown, which shows the failure has a shape:
+
+  probe: right middle, enrolled: right index
+  T2 0.5048  <- accepted at threshold 0.50
+  T11 0.3057, T1 0.2961, T10 0.2909, remaining 11 under 0.21
+
+A lone template clearing the bar while the other fourteen average 0.16.
+A genuine press does the opposite: on my capture set the second-best
+template averages 0.800, because the finger covers several enrolled
+crops at once. Impostors never get there — second-best tops out at
+0.4443 over 4800 trials.
+
+At 3x4 mm a crop holds 6-8 ridge lines, and adjacent fingers of one
+hand share ridge spacing closely enough that a tilted press can align
+one crop by coincidence. Raising the global threshold would trade the
+false reject rate away to cover a case that a single number cannot
+separate, so accept on corroboration instead:
+
+  accept if best >= 0.58, or second-best >= 0.45
+
+Measured against the previous best >= 0.50 rule, 15 templates, 5000
+genuine and 4800 impostor trials:
+
+                    false reject   false accept   #3596398 case
+  best >= 0.50            10.2%          0.00%   accepted
+  corroborated             2.6%          0.00%   rejected
+
+Better on both axes: a quarter of the false rejects, and it rejects the
+reported false accept. The second bound needs no companion test on the
+best score since second-best never exceeds it.
+
+Applied per gallery print in identify, so one print's stray template
+cannot borrow corroboration from another's. Verify was carrying its own
+copy of the scoring loop; it now goes through
+ft9201_score_against_print() like identify, which is what that helper
+was extracted for.
+
+My impostor set is three fingers, none adjacent to the enrolled one, so
+its 0.00% is optimistic by construction. The reported case is the useful
+adversarial sample here and the rule is chosen to reject it.
+---
+ .../drivers/focaltech_moh/focaltech_moh.c     | 93 ++++++++-----------
+ .../drivers/focaltech_moh/focaltech_moh.h     |  6 +-
+ 2 files changed, 46 insertions(+), 53 deletions(-)
+
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+index d8a5c48..675bfcd 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+@@ -421,14 +421,17 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+  * Returns FALSE if the print does not carry usable template data. Shared by
+  * verify and identify so both apply exactly the same criterion. */
+ static gboolean
+-ft9201_score_against_print (FpPrint *print, const guint8 *probe, double *out_score)
++ft9201_score_against_print (FpPrint      *print,
++                            const guint8 *probe,
++                            double       *out_best,
++                            double       *out_second)
+ {
+   g_autoptr(GVariant) var_data = NULL;
+   g_autoptr(GVariant) var_images = NULL;
+   GVariantIter iter;
+   GVariant *img_var;
+   guint8 version;
+-  double best = -1.0;
++  double best = -1.0, second = -1.0;
+   int idx = 0;
+ 
+   g_object_get (print, "fpi-data", &var_data, NULL);
+@@ -455,17 +458,33 @@ ft9201_score_against_print (FpPrint *print, const guint8 *probe, double *out_sco
+ 
+           fp_dbg ("NCC template %d: %.4f", idx, score);
+           if (score > best)
+-            best = score;
++            {
++              second = best;
++              best = score;
++            }
++          else if (score > second)
++            {
++              second = score;
++            }
+         }
+ 
+       g_variant_unref (img_var);
+       idx++;
+     }
+ 
+-  *out_score = best;
++  *out_best = best;
++  *out_second = second;
+   return TRUE;
+ }
+ 
++/* See FT9201_NCC_STRONG. out_second <= out_best always, so the corroborated
++ * branch needs no separate bound on the best score. */
++static gboolean
++ft9201_accept (double best, double second)
++{
++  return best >= FT9201_NCC_STRONG || second >= FT9201_NCC_CORROBORATED;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Enroll state machine                                                */
+ /* ------------------------------------------------------------------ */
+@@ -602,15 +621,9 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+     case VERIFY_MATCH:
+       {
+         FpPrint *print = NULL;
+-        g_autoptr(GVariant) var_data = NULL;
+-        g_autoptr(GVariant) var_images = NULL;
+         guint8 preprocessed[FT9201_RAW_SIZE];
+-        guint8 version;
+-        double best_score = -1.0;
+-        GVariantIter iter;
+-        GVariant *img_var;
++        double best = -1.0, second = -1.0;
+         int unique;
+-        int tmpl_idx = 0;
+ 
+         fpi_device_report_finger_status_changes (dev,
+                                                  FP_FINGER_STATUS_NONE,
+@@ -632,9 +645,8 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+         ft9201_preprocess (self->image_buf, preprocessed);
+ 
+         fpi_device_get_verify_data (dev, &print);
+-        g_object_get (print, "fpi-data", &var_data, NULL);
+ 
+-        if (!g_variant_check_format_string (var_data, "(ya(ay))", FALSE))
++        if (!ft9201_score_against_print (print, preprocessed, &best, &second))
+           {
+             fpi_device_verify_report (dev, FPI_MATCH_ERROR, NULL,
+                                       fpi_device_error_new (FP_DEVICE_ERROR_DATA_INVALID));
+@@ -643,36 +655,10 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+             return;
+           }
+ 
+-        g_variant_get (var_data, "(y@a(ay))", &version, &var_images);
+-        fp_dbg ("Template version: %d", version);
+-
+-        g_variant_iter_init (&iter, var_images);
+-        while ((img_var = g_variant_iter_next_value (&iter)) != NULL)
+-          {
+-            g_autoptr(GVariant) inner = NULL;
+-            const guint8 *tmpl_data;
+-            gsize tmpl_len;
+-
+-            g_variant_get (img_var, "(@ay)", &inner);
+-            tmpl_data = g_variant_get_fixed_array (inner, &tmpl_len, 1);
+-
+-            if (tmpl_len == FT9201_RAW_SIZE)
+-              {
+-                double score = ft9201_match_score (tmpl_data, preprocessed);
+-
+-                fp_dbg ("NCC template %d: %.4f", tmpl_idx, score);
+-                if (score > best_score)
+-                  best_score = score;
+-              }
+-
+-            g_variant_unref (img_var);
+-            tmpl_idx++;
+-          }
+-
+-        fp_info ("Best NCC score: %.4f (threshold: %.2f)",
+-                 best_score, FT9201_NCC_THRESHOLD);
++        fp_info ("Verify best %.4f second %.4f (strong %.2f / corroborated %.2f)",
++                 best, second, FT9201_NCC_STRONG, FT9201_NCC_CORROBORATED);
+ 
+-        if (best_score >= FT9201_NCC_THRESHOLD)
++        if (ft9201_accept (best, second))
+           fpi_device_verify_report (dev, FPI_MATCH_SUCCESS, print, NULL);
+         else
+           fpi_device_verify_report (dev, FPI_MATCH_FAIL, NULL, NULL);
+@@ -757,32 +743,35 @@ identify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+         if (prints != NULL)
+           g_ptr_array_ref (prints);
+ 
+-        /* Score the probe against every gallery print and keep the best.
++        /* Score against every gallery print and keep the best *accepted* one.
+          * Scanning all of them rather than stopping at the first hit means a
+-         * near-miss on an early finger cannot mask the correct one. */
++         * near-miss on an early finger cannot mask the correct one, and the
++         * accept test is applied per print so one print's stray template
++         * cannot borrow corroboration from another's. */
+         for (i = 0; prints != NULL && i < prints->len; i++)
+           {
+             FpPrint *candidate = g_ptr_array_index (prints, i);
+-            double score;
++            double best = -1.0, second = -1.0;
+ 
+-            if (!ft9201_score_against_print (candidate, preprocessed, &score))
++            if (!ft9201_score_against_print (candidate, preprocessed, &best, &second))
+               {
+                 fp_dbg ("Gallery print %u carries no usable template data", i);
+                 continue;
+               }
+ 
+-            fp_dbg ("Gallery print %u: best NCC %.4f", i, score);
+-            if (score > best_score)
++            fp_dbg ("Gallery print %u: best %.4f second %.4f", i, best, second);
++
++            if (ft9201_accept (best, second) && best > best_score)
+               {
+-                best_score = score;
++                best_score = best;
+                 best_match = candidate;
+               }
+           }
+ 
+-        fp_dbg ("Best identify score: %.4f (threshold: %.2f)",
+-                best_score, FT9201_NCC_THRESHOLD);
++        fp_info ("Identify best accepted score: %.4f (strong %.2f / corroborated %.2f)",
++                 best_score, FT9201_NCC_STRONG, FT9201_NCC_CORROBORATED);
+ 
+-        if (best_match != NULL && best_score >= FT9201_NCC_THRESHOLD)
++        if (best_match != NULL)
+           fpi_device_identify_report (dev, best_match, NULL, NULL);
+         else
+           fpi_device_identify_report (dev, NULL, NULL, NULL);
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.h b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+index c699e44..9f64333 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.h
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+@@ -42,7 +42,11 @@ G_DECLARE_FINAL_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh, FPI,
+ 
+ /* Enrollment and matching */
+ #define FT9201_NUM_ENROLL_STAGES 15
+-#define FT9201_NCC_THRESHOLD 0.50
++/* Decision rule: accept on one strong template, or on two corroborating ones.
++ * A genuine press lands on several templates at once; a coincidental alignment
++ * between adjacent fingers on this 3x4 mm surface shows up as a lone outlier. */
++#define FT9201_NCC_STRONG 0.58        /* single template, no corroboration */
++#define FT9201_NCC_CORROBORATED 0.45  /* second-best template must also reach this */
+ #define FT9201_SEARCH_RADIUS 16         /* pixels, each direction */
+ #define FT9201_COARSE_STEP 2            /* coarse pass stride, then +-1 refine */
+ #define FT9201_LOCAL_MEAN_WINDOW 7      /* 7x7 window for high-pass */
+-- 
+2.55.0
+

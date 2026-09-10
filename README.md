@@ -44,9 +44,16 @@ driver se mergee.
 ```
 FT9201_SEARCH_RADIUS       3 -> 16     el desplazamiento real entre pulsaciones
 FT9201_NUM_ENROLL_STAGES   5 -> 15     cada plantilla cubre poca área del dedo
-FT9201_NCC_THRESHOLD    0.30 -> 0.55   con margen deliberado sobre el óptimo
+FT9201_NCC_THRESHOLD    0.30 -> regla de corroboración (ver abajo)
 temp_hot_seconds              -> -1    subir a 15 etapas rozaba el corte térmico
 ```
+
+La decisión no es un umbral único: se acepta si **una** plantilla llega a 0,58 **o**
+si la **segunda mejor** llega a 0,45. Un dedo legítimo casa con varias plantillas a la
+vez (segunda mejor: 0,800 de media); un falso positivo entre dedos adyacentes es una
+plantilla suelta mientras las otras catorce rondan 0,16. Frente al umbral simple de
+0,50: falsos rechazos del 10,2% al **2,6%**, falsos positivos en 0% igual, y rechaza el
+falso positivo reportado en la MR.
 
 Además el driver no implementaba `identify`, así que la pantalla de bloqueo solo
 reconocía la última huella registrada: las demás seguían en disco pero nadie las

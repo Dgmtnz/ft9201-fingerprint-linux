@@ -1,7 +1,7 @@
 From a5228dbe2e459d34051a68b18ea5b9840967c073 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Sat, 22 Aug 2026 13:10:53 +0200
-Subject: [PATCH 6/6] focaltech_moh: drain stale INT_STATUS, speed up matching,
+Subject: [PATCH 6/7] focaltech_moh: drain stale INT_STATUS, speed up matching,
  lower threshold
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

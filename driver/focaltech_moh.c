@@ -421,14 +421,17 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
  * Returns FALSE if the print does not carry usable template data. Shared by
  * verify and identify so both apply exactly the same criterion. */
 static gboolean
-ft9201_score_against_print (FpPrint *print, const guint8 *probe, double *out_score)
+ft9201_score_against_print (FpPrint      *print,
+                            const guint8 *probe,
+                            double       *out_best,
+                            double       *out_second)
 {
   g_autoptr(GVariant) var_data = NULL;
   g_autoptr(GVariant) var_images = NULL;
   GVariantIter iter;
   GVariant *img_var;
   guint8 version;
-  double best = -1.0;
+  double best = -1.0, second = -1.0;
   int idx = 0;
 
   g_object_get (print, "fpi-data", &var_data, NULL);
@@ -455,15 +458,31 @@ ft9201_score_against_print (FpPrint *print, const guint8 *probe, double *out_sco
 
           fp_dbg ("NCC template %d: %.4f", idx, score);
           if (score > best)
-            best = score;
+            {
+              second = best;
+              best = score;
+            }
+          else if (score > second)
+            {
+              second = score;
+            }
         }
 
       g_variant_unref (img_var);
       idx++;
     }
 
-  *out_score = best;
+  *out_best = best;
+  *out_second = second;
   return TRUE;
+}
+
+/* See FT9201_NCC_STRONG. out_second <= out_best always, so the corroborated
+ * branch needs no separate bound on the best score. */
+static gboolean
+ft9201_accept (double best, double second)
+{
+  return best >= FT9201_NCC_STRONG || second >= FT9201_NCC_CORROBORATED;
 }
 
 /* ------------------------------------------------------------------ */
@@ -602,15 +621,9 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
     case VERIFY_MATCH:
       {
         FpPrint *print = NULL;
-        g_autoptr(GVariant) var_data = NULL;
-        g_autoptr(GVariant) var_images = NULL;
         guint8 preprocessed[FT9201_RAW_SIZE];
-        guint8 version;
-        double best_score = -1.0;
-        GVariantIter iter;
-        GVariant *img_var;
+        double best = -1.0, second = -1.0;
         int unique;
-        int tmpl_idx = 0;
 
         fpi_device_report_finger_status_changes (dev,
                                                  FP_FINGER_STATUS_NONE,
@@ -632,9 +645,8 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
         ft9201_preprocess (self->image_buf, preprocessed);
 
         fpi_device_get_verify_data (dev, &print);
-        g_object_get (print, "fpi-data", &var_data, NULL);
 
-        if (!g_variant_check_format_string (var_data, "(ya(ay))", FALSE))
+        if (!ft9201_score_against_print (print, preprocessed, &best, &second))
           {
             fpi_device_verify_report (dev, FPI_MATCH_ERROR, NULL,
                                       fpi_device_error_new (FP_DEVICE_ERROR_DATA_INVALID));
@@ -643,36 +655,10 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
             return;
           }
 
-        g_variant_get (var_data, "(y@a(ay))", &version, &var_images);
-        fp_dbg ("Template version: %d", version);
+        fp_info ("Verify best %.4f second %.4f (strong %.2f / corroborated %.2f)",
+                 best, second, FT9201_NCC_STRONG, FT9201_NCC_CORROBORATED);
 
-        g_variant_iter_init (&iter, var_images);
-        while ((img_var = g_variant_iter_next_value (&iter)) != NULL)
-          {
-            g_autoptr(GVariant) inner = NULL;
-            const guint8 *tmpl_data;
-            gsize tmpl_len;
-
-            g_variant_get (img_var, "(@ay)", &inner);
-            tmpl_data = g_variant_get_fixed_array (inner, &tmpl_len, 1);
-
-            if (tmpl_len == FT9201_RAW_SIZE)
-              {
-                double score = ft9201_match_score (tmpl_data, preprocessed);
-
-                fp_dbg ("NCC template %d: %.4f", tmpl_idx, score);
-                if (score > best_score)
-                  best_score = score;
-              }
-
-            g_variant_unref (img_var);
-            tmpl_idx++;
-          }
-
-        fp_info ("Best NCC score: %.4f (threshold: %.2f)",
-                 best_score, FT9201_NCC_THRESHOLD);
-
-        if (best_score >= FT9201_NCC_THRESHOLD)
+        if (ft9201_accept (best, second))
           fpi_device_verify_report (dev, FPI_MATCH_SUCCESS, print, NULL);
         else
           fpi_device_verify_report (dev, FPI_MATCH_FAIL, NULL, NULL);
@@ -757,32 +743,35 @@ identify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
         if (prints != NULL)
           g_ptr_array_ref (prints);
 
-        /* Score the probe against every gallery print and keep the best.
+        /* Score against every gallery print and keep the best *accepted* one.
          * Scanning all of them rather than stopping at the first hit means a
-         * near-miss on an early finger cannot mask the correct one. */
+         * near-miss on an early finger cannot mask the correct one, and the
+         * accept test is applied per print so one print's stray template
+         * cannot borrow corroboration from another's. */
         for (i = 0; prints != NULL && i < prints->len; i++)
           {
             FpPrint *candidate = g_ptr_array_index (prints, i);
-            double score;
+            double best = -1.0, second = -1.0;
 
-            if (!ft9201_score_against_print (candidate, preprocessed, &score))
+            if (!ft9201_score_against_print (candidate, preprocessed, &best, &second))
               {
                 fp_dbg ("Gallery print %u carries no usable template data", i);
                 continue;
               }
 
-            fp_dbg ("Gallery print %u: best NCC %.4f", i, score);
-            if (score > best_score)
+            fp_dbg ("Gallery print %u: best %.4f second %.4f", i, best, second);
+
+            if (ft9201_accept (best, second) && best > best_score)
               {
-                best_score = score;
+                best_score = best;
                 best_match = candidate;
               }
           }
 
-        fp_dbg ("Best identify score: %.4f (threshold: %.2f)",
-                best_score, FT9201_NCC_THRESHOLD);
+        fp_info ("Identify best accepted score: %.4f (strong %.2f / corroborated %.2f)",
+                 best_score, FT9201_NCC_STRONG, FT9201_NCC_CORROBORATED);
 
-        if (best_match != NULL && best_score >= FT9201_NCC_THRESHOLD)
+        if (best_match != NULL)
           fpi_device_identify_report (dev, best_match, NULL, NULL);
         else
           fpi_device_identify_report (dev, NULL, NULL, NULL);

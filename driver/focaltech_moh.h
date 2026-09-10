@@ -42,7 +42,11 @@ G_DECLARE_FINAL_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh, FPI,
 
 /* Enrollment and matching */
 #define FT9201_NUM_ENROLL_STAGES 15
-#define FT9201_NCC_THRESHOLD 0.50
+/* Decision rule: accept on one strong template, or on two corroborating ones.
+ * A genuine press lands on several templates at once; a coincidental alignment
+ * between adjacent fingers on this 3x4 mm surface shows up as a lone outlier. */
+#define FT9201_NCC_STRONG 0.58        /* single template, no corroboration */
+#define FT9201_NCC_CORROBORATED 0.45  /* second-best template must also reach this */
 #define FT9201_SEARCH_RADIUS 16         /* pixels, each direction */
 #define FT9201_COARSE_STEP 2            /* coarse pass stride, then +-1 refine */
 #define FT9201_LOCAL_MEAN_WINDOW 7      /* 7x7 window for high-pass */
