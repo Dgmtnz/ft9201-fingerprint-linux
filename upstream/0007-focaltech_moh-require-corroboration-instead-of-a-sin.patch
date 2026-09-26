@@ -1,7 +1,7 @@
 From 299188d8b7ad6cf1896851aa40822db76c021907 Mon Sep 17 00:00:00 2001
 From: dgmtnz <dgmtnz.2019@gmail.com>
 Date: Thu, 10 Sep 2026 12:24:03 +0200
-Subject: [PATCH 7/7] focaltech_moh: require corroboration instead of a single
+Subject: [PATCH 7/9] focaltech_moh: require corroboration instead of a single
  best template
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -42,11 +42,24 @@ G_DECLARE_FINAL_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh, FPI,
 
 /* Enrollment and matching */
 #define FT9201_NUM_ENROLL_STAGES 15
-/* Decision rule: accept on one strong template, or on two corroborating ones.
- * A genuine press lands on several templates at once; a coincidental alignment
- * between adjacent fingers on this 3x4 mm surface shows up as a lone outlier. */
-#define FT9201_NCC_STRONG 0.58        /* single template, no corroboration */
-#define FT9201_NCC_CORROBORATED 0.45  /* second-best template must also reach this */
+/* Decision rule: accept on one strong template, or on enough templates
+ * agreeing at a moderate level.
+ *
+ * A genuine press covers several enrolled crops at once. A coincidental
+ * alignment between adjacent fingers — which share ridge spacing closely
+ * enough to correlate on this 3x4 mm surface — lights up two or three crops
+ * and no more. Counting agreements separates the two where their magnitudes
+ * do not: a measured impostor at best 0.5630 / second 0.5119 outscores a
+ * measured genuine at 0.5045 / 0.4614 on both, so no bound on those two
+ * numbers tells them apart, but the impostor had 3 templates over 0.36 against
+ * the genuine's 6.
+ *
+ * Measured over 5000 genuine / 4800 impostor trials at 15 templates: 3.5%
+ * false rejects, no false accepts, and it rejects both reported
+ * adjacent-finger cases. */
+#define FT9201_NCC_STRONG 0.58     /* single template, no confirmation needed */
+#define FT9201_NCC_CONFIRM 0.36    /* a template at or above this counts as agreeing */
+#define FT9201_NCC_MIN_CONFIRM 5   /* how many must agree */
 #define FT9201_SEARCH_RADIUS 16         /* pixels, each direction */
 #define FT9201_COARSE_STEP 2            /* coarse pass stride, then +-1 refine */
 #define FT9201_LOCAL_MEAN_WINDOW 7      /* 7x7 window for high-pass */

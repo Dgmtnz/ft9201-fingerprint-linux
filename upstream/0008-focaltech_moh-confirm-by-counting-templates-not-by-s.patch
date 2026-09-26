@@ -1,0 +1,218 @@
+From 83a0215d2f3b289ac6d92d2d5da5b8549be98037 Mon Sep 17 00:00:00 2001
+From: dgmtnz <dgmtnz.2019@gmail.com>
+Date: Thu, 10 Sep 2026 15:41:11 +0200
+Subject: [PATCH 8/9] focaltech_moh: confirm by counting templates, not by
+ second-best score
+
+@Kwaadpepper broke the corroborated rule in !646 with a middle finger
+against an enrolled index, after re-enrolling with varied angles:
+
+  best 0.5630  second 0.5119  -> accepted, false accept
+  (T1 0.5630, T8 0.5119, T0 0.4747, remaining 12 below 0.37)
+
+Raising the second-best bound would close that case, but it cannot be
+the answer. Next to a genuine press measured on my hardware:
+
+                        best     second
+  genuine (mine)       0.5045    0.4614
+  impostor (theirs)    0.5630    0.5119
+
+The impostor outscores the genuine on both, so for any rule of the form
+"best >= A or second >= B" there are no A and B that accept one and
+reject the other. Adjacent fingers of one hand share ridge spacing
+closely enough that a tilted press aligns two or three crops properly,
+which is exactly what the second-best score measures.
+
+What does separate them is how many crops agree. The impostor had 3
+templates over 0.36; the genuine had 6. A genuine press covers several
+enrolled crops at once; a coincidental ridge alignment lights up a few
+and stops. So confirmation is now a count rather than a magnitude:
+
+  accept if best >= 0.58, or >= 5 of 15 templates reach 0.36
+
+Measured over 5000 genuine / 4800 impostor trials at 15 templates,
+against the alternatives:
+
+  rule                      false reject   false accept   their case
+  second >= 0.45                    2.6%          0.00%   accepted
+  second >= 0.52                   10.3%          0.00%   rejected
+  >= 5 templates over 0.36          3.5%          0.00%   rejected
+
+The count keeps the false reject rate near where the loose bound had it
+while rejecting both reported adjacent-finger cases, and it rejects the
+genuine press at 0.5045 / 0.4614 that a 0.52 bound would have thrown
+away.
+
+Both figures still come from one enrolled finger and three impostor
+fingers on one machine, none of them adjacent to the enrolled one, so
+the 0.00% is optimistic by construction; the reported cases are the
+adversarial samples doing the real work here.
+---
+ .../drivers/focaltech_moh/focaltech_moh.c     | 49 +++++++++----------
+ .../drivers/focaltech_moh/focaltech_moh.h     | 23 +++++++--
+ 2 files changed, 41 insertions(+), 31 deletions(-)
+
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+index 675bfcd..da965dc 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+@@ -424,14 +424,15 @@ static gboolean
+ ft9201_score_against_print (FpPrint      *print,
+                             const guint8 *probe,
+                             double       *out_best,
+-                            double       *out_second)
++                            int          *out_confirms)
+ {
+   g_autoptr(GVariant) var_data = NULL;
+   g_autoptr(GVariant) var_images = NULL;
+   GVariantIter iter;
+   GVariant *img_var;
+   guint8 version;
+-  double best = -1.0, second = -1.0;
++  double best = -1.0;
++  int confirms = 0;
+   int idx = 0;
+ 
+   g_object_get (print, "fpi-data", &var_data, NULL);
+@@ -458,14 +459,9 @@ ft9201_score_against_print (FpPrint      *print,
+ 
+           fp_dbg ("NCC template %d: %.4f", idx, score);
+           if (score > best)
+-            {
+-              second = best;
+-              best = score;
+-            }
+-          else if (score > second)
+-            {
+-              second = score;
+-            }
++            best = score;
++          if (score >= FT9201_NCC_CONFIRM)
++            confirms++;
+         }
+ 
+       g_variant_unref (img_var);
+@@ -473,16 +469,15 @@ ft9201_score_against_print (FpPrint      *print,
+     }
+ 
+   *out_best = best;
+-  *out_second = second;
++  *out_confirms = confirms;
+   return TRUE;
+ }
+ 
+-/* See FT9201_NCC_STRONG. out_second <= out_best always, so the corroborated
+- * branch needs no separate bound on the best score. */
++/* See FT9201_NCC_STRONG. */
+ static gboolean
+-ft9201_accept (double best, double second)
++ft9201_accept (double best, int confirms)
+ {
+-  return best >= FT9201_NCC_STRONG || second >= FT9201_NCC_CORROBORATED;
++  return best >= FT9201_NCC_STRONG || confirms >= FT9201_NCC_MIN_CONFIRM;
+ }
+ 
+ /* ------------------------------------------------------------------ */
+@@ -622,7 +617,8 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+       {
+         FpPrint *print = NULL;
+         guint8 preprocessed[FT9201_RAW_SIZE];
+-        double best = -1.0, second = -1.0;
++        double best = -1.0;
++        int confirms = 0;
+         int unique;
+ 
+         fpi_device_report_finger_status_changes (dev,
+@@ -646,7 +642,7 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+ 
+         fpi_device_get_verify_data (dev, &print);
+ 
+-        if (!ft9201_score_against_print (print, preprocessed, &best, &second))
++        if (!ft9201_score_against_print (print, preprocessed, &best, &confirms))
+           {
+             fpi_device_verify_report (dev, FPI_MATCH_ERROR, NULL,
+                                       fpi_device_error_new (FP_DEVICE_ERROR_DATA_INVALID));
+@@ -655,10 +651,11 @@ verify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+             return;
+           }
+ 
+-        fp_info ("Verify best %.4f second %.4f (strong %.2f / corroborated %.2f)",
+-                 best, second, FT9201_NCC_STRONG, FT9201_NCC_CORROBORATED);
++        fp_info ("Verify best %.4f, %d/%d templates over %.2f (strong %.2f, need %d)",
++                 best, confirms, FT9201_NUM_ENROLL_STAGES, FT9201_NCC_CONFIRM,
++                 FT9201_NCC_STRONG, FT9201_NCC_MIN_CONFIRM);
+ 
+-        if (ft9201_accept (best, second))
++        if (ft9201_accept (best, confirms))
+           fpi_device_verify_report (dev, FPI_MATCH_SUCCESS, print, NULL);
+         else
+           fpi_device_verify_report (dev, FPI_MATCH_FAIL, NULL, NULL);
+@@ -751,25 +748,25 @@ identify_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+         for (i = 0; prints != NULL && i < prints->len; i++)
+           {
+             FpPrint *candidate = g_ptr_array_index (prints, i);
+-            double best = -1.0, second = -1.0;
++            double best = -1.0;
++            int confirms = 0;
+ 
+-            if (!ft9201_score_against_print (candidate, preprocessed, &best, &second))
++            if (!ft9201_score_against_print (candidate, preprocessed, &best, &confirms))
+               {
+                 fp_dbg ("Gallery print %u carries no usable template data", i);
+                 continue;
+               }
+ 
+-            fp_dbg ("Gallery print %u: best %.4f second %.4f", i, best, second);
++            fp_dbg ("Gallery print %u: best %.4f, %d confirming", i, best, confirms);
+ 
+-            if (ft9201_accept (best, second) && best > best_score)
++            if (ft9201_accept (best, confirms) && best > best_score)
+               {
+                 best_score = best;
+                 best_match = candidate;
+               }
+           }
+ 
+-        fp_info ("Identify best accepted score: %.4f (strong %.2f / corroborated %.2f)",
+-                 best_score, FT9201_NCC_STRONG, FT9201_NCC_CORROBORATED);
++        fp_info ("Identify best accepted score: %.4f", best_score);
+ 
+         if (best_match != NULL)
+           fpi_device_identify_report (dev, best_match, NULL, NULL);
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.h b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+index 9f64333..b3bbdae 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.h
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.h
+@@ -42,11 +42,24 @@ G_DECLARE_FINAL_TYPE (FpiDeviceFocaltechMoh, fpi_device_focaltech_moh, FPI,
+ 
+ /* Enrollment and matching */
+ #define FT9201_NUM_ENROLL_STAGES 15
+-/* Decision rule: accept on one strong template, or on two corroborating ones.
+- * A genuine press lands on several templates at once; a coincidental alignment
+- * between adjacent fingers on this 3x4 mm surface shows up as a lone outlier. */
+-#define FT9201_NCC_STRONG 0.58        /* single template, no corroboration */
+-#define FT9201_NCC_CORROBORATED 0.45  /* second-best template must also reach this */
++/* Decision rule: accept on one strong template, or on enough templates
++ * agreeing at a moderate level.
++ *
++ * A genuine press covers several enrolled crops at once. A coincidental
++ * alignment between adjacent fingers — which share ridge spacing closely
++ * enough to correlate on this 3x4 mm surface — lights up two or three crops
++ * and no more. Counting agreements separates the two where their magnitudes
++ * do not: a measured impostor at best 0.5630 / second 0.5119 outscores a
++ * measured genuine at 0.5045 / 0.4614 on both, so no bound on those two
++ * numbers tells them apart, but the impostor had 3 templates over 0.36 against
++ * the genuine's 6.
++ *
++ * Measured over 5000 genuine / 4800 impostor trials at 15 templates: 3.5%
++ * false rejects, no false accepts, and it rejects both reported
++ * adjacent-finger cases. */
++#define FT9201_NCC_STRONG 0.58     /* single template, no confirmation needed */
++#define FT9201_NCC_CONFIRM 0.36    /* a template at or above this counts as agreeing */
++#define FT9201_NCC_MIN_CONFIRM 5   /* how many must agree */
+ #define FT9201_SEARCH_RADIUS 16         /* pixels, each direction */
+ #define FT9201_COARSE_STEP 2            /* coarse pass stride, then +-1 refine */
+ #define FT9201_LOCAL_MEAN_WINDOW 7      /* 7x7 window for high-pass */
+-- 
+2.55.0
+

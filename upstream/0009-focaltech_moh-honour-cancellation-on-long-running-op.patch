@@ -1,0 +1,122 @@
+From edc669e115a54a73e774d68b771ee844de004f8f Mon Sep 17 00:00:00 2001
+From: dgmtnz <dgmtnz.2019@gmail.com>
+Date: Tue, 15 Sep 2026 00:24:38 +0200
+Subject: [PATCH 9/9] focaltech_moh: honour cancellation on long running
+ operations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Every USB transfer now passes fpi_device_get_cancellable() instead of
+NULL, and finger detection checks fpi_device_action_is_cancelled()
+before re-arming its delayed poll. libfprint requires drivers to handle
+cancellation for long running operations and this driver did neither, so
+a cancelled verify or identify kept polling the bus until it happened to
+find a finger.
+
+This is prompted by @Kwaadpepper's report in !646 of fprintd hanging
+until systemd SIGKILLs it, but it does NOT fix that, and the report's
+prescription does not either. Reproduced here and measured:
+
+  client killed with SIGKILL mid-verify, then restart fprintd
+    before: 10.3s, "stop-sigterm timed out", SIGKILL
+    after:  10.4s, same
+
+  client cancelled cleanly (SIGINT) mid-verify, then restart
+    before: 186ms
+    after:  170ms
+
+So the hang needs a client that dies without telling fprintd, and the
+driver is not what keeps it alive. Instrumenting dev_class->cancel shows
+it is never called in either path — not on clean cancellation and not on
+daemon shutdown — so wiring it up would have added a callback nothing
+invokes. Nothing cancels the action when the peer disappears, which puts
+the problem above this driver.
+
+Keeping these two changes anyway because they are correct independently
+of that bug: they are what every other driver here does, and they bound
+teardown when cancellation does arrive.
+---
+ .../drivers/focaltech_moh/focaltech_moh.c     | 31 ++++++++++++++++---
+ 1 file changed, 26 insertions(+), 5 deletions(-)
+
+diff --git a/libfprint/drivers/focaltech_moh/focaltech_moh.c b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+index da965dc..32458ad 100644
+--- a/libfprint/drivers/focaltech_moh/focaltech_moh.c
++++ b/libfprint/drivers/focaltech_moh/focaltech_moh.c
+@@ -216,7 +216,8 @@ ft9201_ctrl_out (FpDevice *dev,
+                                  G_USB_DEVICE_REQUEST_TYPE_VENDOR,
+                                  G_USB_DEVICE_RECIPIENT_DEVICE,
+                                  request, value, index, 0);
+-  fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT, NULL,
++  fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT,
++                           fpi_device_get_cancellable (dev),
+                            fpi_ssm_usb_transfer_cb, NULL);
+ }
+ 
+@@ -256,6 +257,22 @@ finger_poll_cb (FpiUsbTransfer *transfer,
+           transfer->buffer[2], transfer->buffer[3],
+           transfer->actual_length);
+ 
++  /* Finger detection re-arms itself indefinitely, so a cancelled task would
++   * otherwise keep polling the bus forever. Note this does NOT fix the
++   * reported fprintd shutdown hang: measurement showed nothing cancels the
++   * action in that path, so there is no cancellation for this to observe. It
++   * is here because libfprint requires drivers to honour cancellation on long
++   * running operations, and it does shorten teardown when a client cancels. */
++  if (fpi_device_action_is_cancelled (dev))
++    {
++      GError *cancelled = NULL;
++
++      g_cancellable_set_error_if_cancelled (fpi_device_get_cancellable (dev),
++                                            &cancelled);
++      fpi_ssm_mark_failed (transfer->ssm, cancelled);
++      return;
++    }
++
+   if (fpi_ssm_get_cur_state (transfer->ssm) == CAPTURE_WAIT_FINGER_UP)
+     {
+       FpiDeviceFocaltechMoh *self = FPI_DEVICE_FOCALTECH_MOH (dev);
+@@ -326,7 +343,8 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+         fpi_usb_transfer_fill_bulk (transfer, FT9201_EP_IN, 32);
+         transfer->short_is_error = FALSE;
+         transfer->ssm = ssm;
+-        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT, NULL,
++        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT,
++                                 fpi_device_get_cancellable (dev),
+                                  capture_read_cb, NULL);
+         self->warmup_done = TRUE;
+         fp_dbg ("Warmup bulk read submitted");
+@@ -344,7 +362,8 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+                                        G_USB_DEVICE_RECIPIENT_DEVICE,
+                                        FT9201_REQ_INT_STATUS, 0, 0, 4);
+         transfer->ssm = ssm;
+-        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT, NULL,
++        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT,
++                                 fpi_device_get_cancellable (dev),
+                                  finger_poll_cb, NULL);
+       }
+       break;
+@@ -380,7 +399,8 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+         fpi_usb_transfer_fill_bulk (transfer, FT9201_EP_IN, 32);
+         transfer->short_is_error = FALSE;
+         transfer->ssm = ssm;
+-        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT, NULL,
++        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT,
++                                 fpi_device_get_cancellable (dev),
+                                  capture_read_cb, NULL);
+       }
+       break;
+@@ -407,7 +427,8 @@ capture_ssm_handler (FpiSsm *ssm, FpDevice *dev)
+                                          NULL);
+         transfer->short_is_error = FALSE;
+         transfer->ssm = ssm;
+-        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT, NULL,
++        fpi_usb_transfer_submit (transfer, FT9201_CMD_TIMEOUT,
++                                 fpi_device_get_cancellable (dev),
+                                  capture_read_cb, NULL);
+       }
+       break;
+-- 
+2.55.0
+
